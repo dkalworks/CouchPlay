@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CouchPlay · Host</title>
+  </head>
+  <body>
+    <main>
+      <section id="setup" class="card narrow">
+        <h1>🛋️ CouchPlay host</h1>
+        <p class="muted">Share your game window, then read the room code out in voice chat.</p>
+        <label>Bitrate per friend
+          <select id="bitrate">
+            <option value="4000">4 Mbps (720p)</option>
+            <option value="8000" selected>8 Mbps (1080p)</option>
+            <option value="15000">15 Mbps</option>
+            <option value="25000">25 Mbps (LAN)</option>
+          </select>
+        </label>
+        <button id="start">Start party</button>
+      </section>
+
+      <section id="live" hidden>
+        <div class="code-box">
+          <span class="muted">Room code</span>
+          <strong id="code">…</strong>
+          <span class="small"><a id="link" target="_blank"></a> <button id="copy" class="ghost">Copy link</button></span>
+        </div>
+        <video id="preview" autoplay playsinline muted></video>
+        <div class="bar">
+          <span id="holder"></span>
+          <button id="take-back" hidden>Take control back</button>
+          <button id="stop" class="ghost">End party</button>
+        </div>
+        <h2>Friends</h2>
+        <ul id="roster"></ul>
+      </section>
+
+      <aside class="card">
+        <h2>Virtual controller</h2>
+        <p class="muted small">What the game would receive. The native host feeds this into a real virtual gamepad.</p>
+        <div id="pad"></div>
+        <h2>Diagnostics</h2>
+        <dl id="diag"></dl>
+      </aside>
+    </main>
+    <script type="module" src="/src/host.js"></script>
+  </body>
+</html>

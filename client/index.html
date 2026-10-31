@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CouchPlay</title>
+  </head>
+  <body>
+    <main>
+      <section id="join" class="card narrow">
+        <h1>🛋️ CouchPlay</h1>
+        <p class="muted">Enter the code your host sees on their screen.</p>
+        <form id="join-form">
+          <label>Room code <input id="room" required maxlength="5" autocomplete="off" placeholder="ABCDE" /></label>
+          <label>Your name <input id="name" required maxlength="32" placeholder="Name" /></label>
+          <button type="submit">Join</button>
+        </form>
+        <p id="error" class="error" hidden></p>
+      </section>
+
+      <section id="stage" hidden>
+        <video id="video" autoplay playsinline muted></video>
+        <div class="bar">
+          <span id="holder"></span>
+          <button id="toggle">Take control</button>
+          <button id="unmute" class="ghost">🔇 Unmute</button>
+        </div>
+        <p id="peers" class="muted"></p>
+      </section>
+
+      <aside class="card">
+        <h2>Your controller</h2>
+        <div id="pad"></div>
+        <p class="muted small">No controller? Keyboard: WASD stick · arrows D-pad · Z X C V = A B X Y · Q/E bumpers · R/F triggers · Enter Start.</p>
+        <h2>Diagnostics</h2>
+        <dl id="diag"></dl>
+      </aside>
+    </main>
+    <script type="module" src="/src/viewer.js"></script>
+  </body>
+</html>
