@@ -10,7 +10,8 @@
     "build": "vite build",
     "start": "node --env-file-if-exists=.env server/index.js",
     "smoke": "node scripts/smoke-test.js",
-    "e2e": "node scripts/e2e.js"
+    "e2e": "node scripts/e2e.js",
+    "e2e:native": "node scripts/e2e-native.js"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",
