@@ -1,7 +1,7 @@
 //! Capture + encode thread: samples the latest screen frame at a fixed rate and publishes
 //! encoded H.264 to every viewer through `Media`.
 
-use crate::capture::Capture;
+use crate::capture::{Capture, Source};
 use crate::encoder::Encoder;
 use crate::gpu;
 use crate::media::{Media, VideoFrame};
@@ -16,6 +16,7 @@ pub struct VideoSettings {
     pub kbps: u32,
     /// Stream height; width follows the monitor's aspect ratio. 0 keeps the native size.
     pub height: u32,
+    pub source: Source,
 }
 
 pub fn spawn(media: Media, settings: VideoSettings) -> std::io::Result<std::thread::JoinHandle<()>> {
@@ -30,9 +31,26 @@ fn even(v: u32) -> u32 {
     v & !1
 }
 
+/// Keeps trying until the source exists, so the host can be started before the game.
+fn wait_for_capture(gpu: &gpu::Gpu, source: &Source) -> Capture {
+    let mut announced = false;
+    loop {
+        match Capture::start(gpu, source) {
+            Ok(c) => return c,
+            Err(e) => {
+                if !announced {
+                    warn!("waiting for {}: {e:#}", source.describe());
+                    announced = true;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
 fn run(media: Media, s: VideoSettings) -> Result<()> {
     let gpu = gpu::create()?;
-    let capture = Capture::start(&gpu)?;
+    let mut capture = wait_for_capture(&gpu, &s.source);
 
     let (cw, ch) = capture.size;
     let (out_w, out_h) = if s.height == 0 || s.height >= ch {
@@ -42,8 +60,8 @@ fn run(media: Media, s: VideoSettings) -> Result<()> {
     };
     let mut encoder = Encoder::new(&gpu, (out_w, out_h), s.fps, s.kbps)?;
     info!(
-        "capturing {cw}x{ch}, streaming {out_w}x{out_h}@{} at {} kbps via {}",
-        s.fps, s.kbps, encoder.name
+        "capturing {} ({cw}x{ch}), streaming {out_w}x{out_h}@{} at {} kbps via {}",
+        s.source.describe(), s.fps, s.kbps, encoder.name
     );
 
     let step = Duration::from_nanos(1_000_000_000 / s.fps as u64);
@@ -64,6 +82,15 @@ fn run(media: Media, s: VideoSettings) -> Result<()> {
             next = now; // fell far behind; don't try to catch up
         }
 
+        if capture.is_closed() {
+            warn!("{} went away; waiting for it to come back", s.source.describe());
+            drop(capture);
+            capture = wait_for_capture(&gpu, &s.source);
+            info!("capturing {} again", s.source.describe());
+            media.want_keyframe.store(true, Ordering::Relaxed);
+            next = Instant::now();
+            continue;
+        }
         if media.frames.receiver_count() == 0 {
             continue;
         }

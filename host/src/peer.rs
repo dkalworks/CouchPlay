@@ -4,7 +4,7 @@ use crate::pad::VirtualPad;
 use anyhow::{Context, Result};
 use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::configuration::media_engine::MIME_TYPE_H264;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS};
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters,
     RtpCodecKind,
@@ -113,6 +113,20 @@ pub fn h264_codec() -> RTCRtpCodecParameters {
     }
 }
 
+pub fn opus_codec() -> RTCRtpCodecParameters {
+    RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_OPUS.to_owned(),
+            clock_rate: 48000,
+            channels: 2,
+            sdp_fmtp_line: "minptime=10;useinbandfec=1;stereo=1".to_owned(),
+            rtcp_feedback: vec![],
+        },
+        payload_type: 111,
+        ..Default::default()
+    }
+}
+
 pub struct PeerConfig {
     pub ice_servers: Vec<RTCIceServer>,
 }
@@ -153,6 +167,8 @@ async fn run(
     let video_codec = h264_codec();
     let mut media_engine = MediaEngine::default();
     media_engine.register_codec(video_codec.clone(), RtpCodecKind::Video)?;
+    let audio_codec = opus_codec();
+    media_engine.register_codec(audio_codec.clone(), RtpCodecKind::Audio)?;
     let registry = register_default_interceptors(Registry::new(), &mut media_engine)?;
 
     let config = RTCConfigurationBuilder::new().with_ice_servers(cfg.ice_servers.clone()).build();
@@ -186,6 +202,25 @@ async fn run(
     )?);
     let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await?;
 
+    let audio_track = Arc::new(TrackLocalStaticSample::new(
+        Instant::now(),
+        MediaStreamTrack::new(
+            "couchplay".into(),
+            "couchplay-audio".into(),
+            "couchplay-audio".into(),
+            RtpCodecKind::Audio,
+            vec![RTCRtpEncodingParameters {
+                rtp_coding_parameters: RTCRtpCodingParameters {
+                    ssrc: Some(rand_ssrc().wrapping_add(1)),
+                    ..Default::default()
+                },
+                codec: audio_codec.rtp_codec.clone(),
+                ..Default::default()
+            }],
+        ),
+    )?);
+    let audio_sender = pc.add_track(audio_track.clone() as Arc<dyn TrackLocal>).await?;
+
     // Unordered + no retransmits: a late input packet is worse than a lost one.
     let input_dc = pc
         .create_data_channel(
@@ -209,6 +244,7 @@ async fn run(
     }
 
     let mut video_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut audio_task: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         tokio::select! {
             Some(data) = signals.recv() => {
@@ -230,6 +266,9 @@ async fn run(
                     video_task = Some(tokio::spawn(video_loop(
                         id.clone(), track.clone(), sender.clone(), frames, media.clone(),
                     )));
+                    audio_task = Some(tokio::spawn(audio_loop(
+                        id.clone(), audio_track.clone(), audio_sender.clone(), media.audio.subscribe(),
+                    )));
                 }
                 Event::Connected => {}
                 Event::Failed => break,
@@ -237,7 +276,7 @@ async fn run(
             else => break,
         }
     }
-    if let Some(t) = video_task {
+    for t in [video_task, audio_task].into_iter().flatten() {
         t.abort();
     }
     let _ = pc.close().await;
@@ -296,6 +335,46 @@ async fn video_loop(
                 need_key = true;
                 media.want_keyframe.store(true, Ordering::Relaxed);
             }
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
+    }
+}
+
+async fn audio_loop(
+    id: String,
+    track: Arc<TrackLocalStaticSample>,
+    sender: Arc<dyn webrtc::rtp_transceiver::RtpSender>,
+    mut frames: broadcast::Receiver<Arc<crate::media::AudioFrame>>,
+) {
+    let setup = async {
+        let ssrc = *track.ssrcs().await.first().context("track has no ssrc")?;
+        let pt = sender
+            .get_parameters()
+            .await?
+            .rtp_parameters
+            .codecs
+            .first()
+            .map(|c| c.payload_type)
+            .context("no negotiated audio codec")?;
+        anyhow::Ok((ssrc, pt))
+    };
+    let (ssrc, pt) = match setup.await {
+        Ok(v) => v,
+        Err(e) => return warn!(peer = %id, "audio setup: {e:#}"),
+    };
+    loop {
+        match frames.recv().await {
+            Ok(frame) => {
+                let sample = Sample {
+                    data: frame.data.clone(),
+                    duration: frame.duration,
+                    ..Sample::new(Instant::now())
+                };
+                if let Err(e) = track.sample_writer(ssrc, pt).write_sample(&sample).await {
+                    return debug!(peer = %id, "audio write_sample: {e}");
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => return,
         }
     }

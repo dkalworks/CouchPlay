@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use std::mem::ManuallyDrop;
 use std::time::{Duration, Instant};
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Media::MediaFoundation::*;
@@ -233,6 +234,19 @@ impl Encoder {
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
             );
 
+            // Keep the source's aspect ratio; the rest of the frame stays black.
+            let dest = fit_rect(in_size, self.out_size);
+            let full = RECT { left: 0, top: 0, right: ow as i32, bottom: oh as i32 };
+            self.video_context.VideoProcessorSetStreamDestRect(&processor, 0, true, Some(&dest));
+            self.video_context.VideoProcessorSetOutputTargetRect(&processor, true, Some(&full));
+            self.video_context.VideoProcessorSetStreamOutputRate(
+                &processor,
+                0,
+                D3D11_VIDEO_PROCESSOR_OUTPUT_RATE_NORMAL,
+                true,
+                None,
+            );
+
             if self.nv12.is_empty() {
                 for _ in 0..NV12_POOL {
                     let desc = D3D11_TEXTURE2D_DESC {
@@ -427,6 +441,20 @@ fn pack(hi: u32, lo: u32) -> u64 {
 }
 
 /// True if the Annex-B stream contains a NAL unit of `nal_type`.
+/// Largest even-sized rectangle with the input's aspect ratio that fits the output, centred.
+pub fn fit_rect(input: (u32, u32), output: (u32, u32)) -> RECT {
+    let (iw, ih) = (input.0.max(1) as u64, input.1.max(1) as u64);
+    let (ow, oh) = (output.0 as u64, output.1 as u64);
+    let (w, h) = if iw * oh > ow * ih {
+        (ow, (ih * ow / iw).max(2))
+    } else {
+        ((iw * oh / ih).max(2), oh)
+    };
+    let (w, h) = (w & !1, h & !1);
+    let (x, y) = (((ow - w) / 2) & !1, ((oh - h) / 2) & !1);
+    RECT { left: x as i32, top: y as i32, right: (x + w) as i32, bottom: (y + h) as i32 }
+}
+
 pub fn has_nal(data: &[u8], nal_type: u8) -> bool {
     data.windows(4)
         .enumerate()
@@ -436,7 +464,21 @@ pub fn has_nal(data: &[u8], nal_type: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::has_nal;
+    use super::{fit_rect, has_nal};
+
+    #[test]
+    fn letterboxes_to_keep_aspect() {
+        let r = fit_rect((1920, 1080), (1920, 1080));
+        assert_eq!((r.left, r.top, r.right, r.bottom), (0, 0, 1920, 1080));
+        // A 4:3 window in a 16:9 stream gets black bars left and right.
+        let r = fit_rect((1024, 768), (1920, 1080));
+        assert_eq!((r.top, r.bottom), (0, 1080));
+        assert_eq!(r.right - r.left, 1440);
+        assert_eq!(r.left, 240);
+        // A tall window gets bars top and bottom.
+        let r = fit_rect((1000, 2000), (1920, 1080));
+        assert_eq!((r.left, r.right), (690, 1230));
+    }
 
     #[test]
     fn finds_nal_types() {

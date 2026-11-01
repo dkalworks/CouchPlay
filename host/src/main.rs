@@ -1,3 +1,4 @@
+mod audio;
 mod capture;
 mod encoder;
 mod gpu;
@@ -6,6 +7,7 @@ mod media;
 mod pad;
 mod peer;
 mod pipeline;
+mod proc_loopback;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -35,6 +37,25 @@ struct Args {
     /// Video bitrate in kbit/s.
     #[arg(long, default_value_t = 12000)]
     kbps: u32,
+    /// Audio bitrate in kbit/s.
+    #[arg(long, default_value_t = 128)]
+    audio_kbps: u32,
+    /// Apps whose audio is left out of the stream (comma separated; empty = capture everything).
+    /// Keeps Discord voice chat out so friends do not hear themselves.
+    #[arg(long, env = "COUCHPLAY_AUDIO_EXCLUDE", default_value = "Discord.exe,DiscordPTB.exe,DiscordCanary.exe")]
+    audio_exclude: String,
+    /// Don't stream system audio.
+    #[arg(long)]
+    no_audio: bool,
+    /// Capture this monitor (0 = primary). See --list-sources.
+    #[arg(long, default_value_t = 0)]
+    monitor: usize,
+    /// Capture the largest visible window whose title contains this text instead of a monitor.
+    #[arg(long)]
+    window: Option<String>,
+    /// Print the monitors and windows that can be captured, then exit.
+    #[arg(long)]
+    list_sources: bool,
     /// Stream height in pixels (0 = native resolution).
     #[arg(long, default_value_t = 1080)]
     height: u32,
@@ -49,13 +70,33 @@ async fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
+    if args.list_sources {
+        return capture::print_sources();
+    }
 
     let shared = peer::Shared::new();
     let media = media::Media::new();
     pipeline::spawn(
         media.clone(),
-        pipeline::VideoSettings { fps: args.fps, kbps: args.kbps, height: args.height },
+        pipeline::VideoSettings {
+            fps: args.fps,
+            kbps: args.kbps,
+            height: args.height,
+            source: match args.window {
+                Some(title) => capture::Source::Window(title),
+                None => capture::Source::Monitor(args.monitor),
+            },
+        },
     )?;
+    if !args.no_audio {
+        let exclude = args
+            .audio_exclude
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        audio::spawn(media.clone(), args.audio_kbps, exclude)?;
+    }
     let cfg = Arc::new(peer::PeerConfig {
         ice_servers: vec![RTCIceServer {
             urls: args.ice.split(',').map(|s| s.trim().to_string()).collect(),

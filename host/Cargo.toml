@@ -9,6 +9,7 @@ async-trait = "0.1.92"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 futures-util = "0.3.34"
+opus = "0.4.0"
 rtc = "0.21"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -20,6 +21,7 @@ webrtc = "0.21.1"
 
 [target.'cfg(windows)'.dependencies]
 vigem-client = "0.1.4"
+windows-core = "0.62"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
@@ -32,11 +34,17 @@ features = [
   "Win32_Graphics_Direct3D",
   "Win32_Graphics_Direct3D10",
   "Win32_Graphics_Direct3D11",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Dwm",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
   "Win32_Media_MediaFoundation",
   "Win32_System_Com",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_Ole",
   "Win32_System_Variant",
